@@ -1,0 +1,52 @@
+version: '3'
+
+vars:
+  BIN_NAME: tiktok-agent
+  GOFLAGS: -trimpath
+  LDFLAGS: -s -w
+  DIST_DIR: dist
+
+tasks:
+  default:
+    desc: デフォルト（static + dynamic ビルド）
+    deps:
+      - build
+
+  clean:
+    desc: ビルド成果物を削除
+    cmds:
+      - rm -rf {{.DIST_DIR}}
+
+  build:
+    desc: linux/amd64 向けビルド（static + dynamic の両方を生成）
+    deps:
+      - build:static
+      - build:dynamic
+
+  build:static:
+    desc: 静的リンクビルド（CGO 無効）
+    env:
+      CGO_ENABLED: '0'
+      GOOS: linux
+      GOARCH: amd64
+    cmds:
+      - go build {{.GOFLAGS}} -ldflags '{{.LDFLAGS}}' -buildvcs=false -o {{.DIST_DIR}}/{{.BIN_NAME}}-linux-amd64-static ./cmd/tiktok-agent
+
+  build:dynamic:
+    desc: 動的リンクビルド（CGO 有効）
+    env:
+      CGO_ENABLED: '1'
+      GOOS: linux
+      GOARCH: amd64
+    cmds:
+      - go build {{.GOFLAGS}} -ldflags '{{.LDFLAGS}}' -buildvcs=false -o {{.DIST_DIR}}/{{.BIN_NAME}}-linux-amd64-dynamic ./cmd/tiktok-agent
+
+  test:
+    desc: テストを実行
+    cmds:
+      - go test ./...
+
+  vet:
+    desc: go vet を実行
+    cmds:
+      - go vet ./...

@@ -1,0 +1,40 @@
+# tiktok-agent の systemd ユーザーサービス
+#
+# 使い方:
+#   1. このファイルを ~/.config/systemd/user/ にコピー
+#   2. systemctl --user daemon-reload
+#   3. systemctl --user enable --now tiktok-agent.service
+#   4. ログ確認: journalctl --user -u tiktok-agent -f
+#
+# パスは %h（= ~）配下の tiktok-agent ディレクトリを想定している。
+# 必要に応じて ExecStart のバイナリパス・config パスを調整すること。
+
+[Unit]
+Description=TikTok Live Agent (monitor)
+Documentation=file:%h/tiktok-agent/AGENTS.md
+After=network-online.target
+Wants=network-online.target
+
+# ---- 再起動ループによる API への DoS 対策 ----
+# StartLimitIntervalSec 内の再起動回数が StartLimitBurst を超えると
+# systemd は起動を打ち切って failed 状態にする（無限再起動ループを防止）。
+# 復帰には systemctl --user reset-failed tiktok-agent.service が必要。
+StartLimitIntervalSec=1h
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=%h/tiktok-agent
+ExecStart=%h/tiktok-agent/dist/tiktok-agent-linux-amd64-static -config %h/tiktok-agent/config.yaml
+
+# 異常終了（exit code != 0 / シグナル）時のみ再起動。
+# 正常終了（SIGINT/SIGTERM によるクリーンな停止）では再起動しない。
+Restart=on-failure
+
+# 再起動前に十分なディレイを入れて API を過剰に叩かないようにする。
+# RandomizedDelaySec で 0〜30s のランダムなゆらぎをさらに追加。
+RestartSec=1min
+RandomizedDelaySec=30s
+
+[Install]
+WantedBy=default.target

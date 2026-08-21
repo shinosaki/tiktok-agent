@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tiktok-agent</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  details > summary { cursor: pointer; }
+  details > summary::-webkit-details-marker { display: none; }
+  .badge { padding: 0.125rem 0.5rem; border-radius: 9999px; font-size: 0.7rem; font-weight: 600; }
+  .badge-running { background: #78350f; color: #fbbf24; }
+  .badge-done { background: #14532d; color: #4ade80; }
+  .badge-failed { background: #7f1d1d; color: #f87171; }
+</style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+  <header class="border-b border-slate-800 px-6 py-4 flex items-center justify-between">
+    <h1 class="text-xl font-bold">tiktok-agent</h1>
+    <span id="updated" class="text-sm text-slate-400">-</span>
+  </header>
+
+  <main class="px-6 py-6 space-y-8 max-w-6xl mx-auto">
+
+    <section>
+      <h2 class="text-lg font-semibold mb-3">アクティブなライブ <span id="live-count" class="text-sm text-slate-400"></span></h2>
+      <div class="overflow-x-auto rounded-lg border border-slate-800">
+        <table class="w-full text-sm">
+          <thead class="bg-slate-900 text-slate-400 text-left">
+            <tr>
+              <th class="px-4 py-2">RoomID</th>
+              <th class="px-4 py-2">Username</th>
+              <th class="px-4 py-2">Nickname</th>
+              <th class="px-4 py-2">Title</th>
+              <th class="px-4 py-2 text-right">Viewers</th>
+              <th class="px-4 py-2 text-right">Likes</th>
+              <th class="px-4 py-2">DetectedAt</th>
+            </tr>
+          </thead>
+          <tbody id="lives-body">
+            {{range .Lives}}
+            <tr class="border-t border-slate-800">
+              <td class="px-4 py-2 mono text-xs">{{.RoomID}}</td>
+              <td class="px-4 py-2">{{.Username}}</td>
+              <td class="px-4 py-2">{{.Nickname}}</td>
+              <td class="px-4 py-2">{{.Title}}</td>
+              <td class="px-4 py-2 text-right">{{.ViewerCount}}</td>
+              <td class="px-4 py-2 text-right">{{.LikeCount}}</td>
+              <td class="px-4 py-2 text-slate-400">{{.DetectedAt.Format "2006-01-02 15:04:05"}}</td>
+            </tr>
+            {{else}}
+            <tr class="border-t border-slate-800">
+              <td class="px-4 py-2 text-slate-500" colspan="7">ライブなし</td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <h2 class="text-lg font-semibold mb-3">コマンド <span id="cmd-count" class="text-sm text-slate-400"></span></h2>
+      <div id="commands" class="space-y-2">
+        {{range .Commands}}
+        <div class="command rounded-lg border border-slate-800 bg-slate-900">
+          <details>
+            <summary class="px-4 py-3 flex items-center gap-4">
+              <span class="badge badge-{{.State}}">{{.State}}</span>
+              <span class="mono text-xs text-slate-400">{{.RoomID}}</span>
+              <span class="text-xs">{{.Username}}</span>
+              <span class="mono text-xs text-slate-300 truncate">{{.CommandLine}}</span>
+              <span class="text-xs text-slate-500 ml-auto">{{.StartedAt.Format "2006-01-02 15:04:05"}}</span>
+            </summary>
+            <div class="px-4 pb-4 space-y-3">
+              <div>
+                <div class="text-xs text-slate-400 mb-1">stdout</div>
+                <pre class="mono text-xs bg-slate-950 rounded p-2 overflow-x-auto whitespace-pre-wrap">{{stdout .}}</pre>
+              </div>
+              <div>
+                <div class="text-xs text-slate-400 mb-1">stderr</div>
+                <pre class="mono text-xs bg-slate-950 rounded p-2 overflow-x-auto whitespace-pre-wrap">{{stderr .}}</pre>
+              </div>
+              {{if .ExitErr}}<div class="text-red-400 text-xs">exit: {{.ExitErr}}</div>{{end}}
+            </div>
+          </details>
+        </div>
+        {{else}}
+        <div class="text-slate-500">コマンドなし</div>
+        {{end}}
+      </div>
+    </section>
+
+    <section>
+      <h2 class="text-lg font-semibold mb-3">ログ</h2>
+      <pre id="logs" class="mono text-xs bg-slate-900 rounded-lg p-4 overflow-x-auto whitespace-pre-wrap">{{range .Logs}}{{.}}
+{{end}}</pre>
+    </section>
+  </main>
+
+<script>
+'use strict';
+
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;
+  return n;
+}
+
+function stateOf(c) {
+  if (c.finished_at === null || c.finished_at === undefined) return 'running';
+  return c.exit_err ? 'failed' : 'done';
+}
+
+function fmt(t) {
+  if (!t) return '-';
+  const d = new Date(t);
+  if (isNaN(d.getTime())) return t;
+  return d.toLocaleString('ja-JP');
+}
+
+function renderLives(lives) {
+  const body = document.getElementById('lives-body');
+  body.replaceChildren();
+  document.getElementById('live-count').textContent = '(' + lives.length + ')';
+  if (lives.length === 0) {
+    const tr = el('tr', 'border-t border-slate-800');
+    tr.appendChild(el('td', 'px-4 py-2 text-slate-500', 'ライブなし'));
+    tr.firstChild.colSpan = 7;
+    body.appendChild(tr);
+    return;
+  }
+  for (const lv of lives) {
+    const tr = el('tr', 'border-t border-slate-800');
+    tr.appendChild(el('td', 'px-4 py-2 mono text-xs', lv.room_id));
+    tr.appendChild(el('td', 'px-4 py-2', lv.username));
+    tr.appendChild(el('td', 'px-4 py-2', lv.nickname));
+    tr.appendChild(el('td', 'px-4 py-2', lv.title));
+    tr.appendChild(el('td', 'px-4 py-2 text-right', String(lv.viewer_count)));
+    tr.appendChild(el('td', 'px-4 py-2 text-right', String(lv.like_count)));
+    tr.appendChild(el('td', 'px-4 py-2 text-slate-400', fmt(lv.detected_at)));
+    body.appendChild(tr);
+  }
+}
+
+function renderCommands(commands) {
+  const box = document.getElementById('commands');
+  box.replaceChildren();
+  document.getElementById('cmd-count').textContent = '(' + commands.length + ')';
+  if (commands.length === 0) {
+    box.appendChild(el('div', 'text-slate-500', 'コマンドなし'));
+    return;
+  }
+  for (const c of commands) {
+    const state = stateOf(c);
+    const card = el('div', 'command rounded-lg border border-slate-800 bg-slate-900');
+    const details = document.createElement('details');
+    const summary = el('summary', 'px-4 py-3 flex items-center gap-4');
+    summary.appendChild(el('span', 'badge badge-' + state, state));
+    summary.appendChild(el('span', 'mono text-xs text-slate-400', c.room_id));
+    summary.appendChild(el('span', 'text-xs', c.username));
+    const cmdLine = el('span', 'mono text-xs text-slate-300 truncate', c.command_line);
+    cmdLine.title = c.command_line;
+    summary.appendChild(cmdLine);
+    const started = el('span', 'text-xs text-slate-500 ml-auto', fmt(c.started_at));
+    started.classList.add('ml-auto');
+    summary.appendChild(started);
+    details.appendChild(summary);
+
+    const inner = el('div', 'px-4 pb-4 space-y-3');
+    const mkStream = (label, lines) => {
+      const wrap = el('div');
+      wrap.appendChild(el('div', 'text-xs text-slate-400 mb-1', label));
+      wrap.appendChild(el('pre', 'mono text-xs bg-slate-950 rounded p-2 overflow-x-auto whitespace-pre-wrap', lines));
+      return wrap;
+    };
+    inner.appendChild(mkStream('stdout', (c.stdout || []).join('\n')));
+    inner.appendChild(mkStream('stderr', (c.stderr || []).join('\n')));
+    if (c.exit_err) inner.appendChild(el('div', 'text-red-400 text-xs', 'exit: ' + c.exit_err));
+    details.appendChild(inner);
+    card.appendChild(details);
+    box.appendChild(card);
+  }
+}
+
+function renderLogs(logs) {
+  const pre = document.getElementById('logs');
+  pre.textContent = logs.join('\n');
+}
+
+async function refresh() {
+  try {
+    const [lives, commands, logs] = await Promise.all([
+      fetch('/api/lives').then(r => r.json()),
+      fetch('/api/commands').then(r => r.json()),
+      fetch('/api/logs').then(r => r.json()),
+    ]);
+    renderLives(lives);
+    renderCommands(commands);
+    renderLogs(logs);
+    document.getElementById('updated').textContent = '更新: ' + new Date().toLocaleTimeString('ja-JP');
+  } catch (e) {
+    // 一時的なネットワークエラーは無視して次回の更新に任せる
+  }
+}
+
+setInterval(refresh, 2000);
+refresh();
+</script>
+</body>
+</html>

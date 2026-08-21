@@ -1,0 +1,35 @@
+# config.example.yaml
+# コピーして config.yaml として使用する。curl コマンドは DevTools で取得したものをそのまま貼り付ける。
+#
+# 注意: on_live_start.commands に {{.StreamURL}} のようなテンプレートや
+# JSON ボディ（{"room": ...}）を含む場合は、YAML パーサが波括弧を誤解釈するため
+# 必ずブロックスカラー（- |）で記述すること。
+
+polling_interval:
+  min: 60s     # この範囲から毎回ランダムに決定
+  max: 120s
+
+fetch:
+  command: |
+    curl 'https://www.tiktok.com/webcast/following/...' \
+      -H 'user-agent: Mozilla/5.0 ...' \
+      -b 'sessionid=...'
+
+targets:
+  - username
+
+on_live_start:
+  commands:
+    - |-
+      ffmpeg -i "{{.StreamURL}}" -c copy "/tmp/{{now.Format "20060102_150405"}}-{{sanitize .Username}}-{{sanitize .Title}}.ts"
+    - |-
+      curl -X POST -d '{"room": "{{.RoomID}}", "user": "{{.Username}}"}' https://example.com/webhook
+    # リトライ設定（ライブがアクティブな間、終了コードに関係なく max_retries+1 回まで実行）
+    # - command: |-
+    #     ffmpeg -i "{{.StreamURL}}" -c copy "/tmp/{{sanitize .Username}}.ts"
+    #   retry:
+    #     enabled: true
+    #     max_retries: 3
+    #     interval:
+    #       min: 10s
+    #       max: 30s
